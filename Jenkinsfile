@@ -4,6 +4,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
+                echo "Obteniendo el código desde GitHub..."
                 sh 'rm -rf dvwa || true'
                 sh 'git clone https://github.com/Matias25pinto/curso_ciberseguridad_DVWA dvwa'
                 stash name: 'dvwa-code', includes: 'dvwa/**'
@@ -60,6 +61,21 @@ pipeline {
                         test -f sonarqube.json || echo "{}" > sonarqube.json
                         echo "=== Archivo sonarqube.json ==="
                         ls -la sonarqube.json
+                        
+                        # Mostrar información básica del reporte (sin usar readJSON)
+                        echo "=== Información del reporte ==="
+                        if [ -s sonarqube.json ] && [ "$(cat sonarqube.json)" != "{}" ]; then
+                            echo "El archivo sonarqube.json tiene contenido."
+                            # Usar jq si está disponible en el contenedor
+                            if command -v jq &> /dev/null; then
+                                TOTAL_ISSUES=$(jq '.total' sonarqube.json 2>/dev/null || echo "0")
+                                echo "Total de issues: $TOTAL_ISSUES"
+                            else
+                                echo "jq no está disponible para analizar el JSON."
+                            fi
+                        else
+                            echo "El archivo sonarqube.json está vacío o no existe."
+                        fi
                     '''
                 }
                 
@@ -69,37 +85,35 @@ pipeline {
             
             post {
                 always {
-                    script {
-                        if (fileExists('sonarqube.json')) {
-                            try {
-                                def results = readJSON file: 'sonarqube.json'
-                                echo "SonarQube encontró ${results.total ?: 0} issues"
-                                
-                                // Mostrar tipos de issues
-                                if (results.issues) {
-                                    def bugs = results.issues.count { it.type == 'BUG' }
-                                    def vulns = results.issues.count { it.type == 'VULNERABILITY' }
-                                    def smells = results.issues.count { it.type == 'CODE_SMELL' }
-                                    
-                                    echo "  - Bugs: ${bugs}"
-                                    echo "  - Vulnerabilidades: ${vulns}"
-                                    echo "  - Code Smells: ${smells}"
-                                }
-                            } catch (Exception e) {
-                                echo "No se pudo procesar el JSON: ${e.message}"
-                            }
-                        }
-                    }
+                    // Mostrar mensaje simple sin procesar JSON
+                    echo "✅ Análisis de SonarQube completado"
+                    echo "📊 Dashboard: http://localhost:9000/dashboard?id=DVWA-Security-App"
+                    echo "📄 Reporte JSON archivado como sonarqube.json"
                 }
             }
         }
 
         stage('Build & Deploy') {
             steps {
+                echo "Construyendo Docker image para DVWA..."
                 sh 'cd dvwa && docker build -t dvwa-app:latest .'
-                sh 'docker rm -f dvwa-app || true'
-                sh 'docker run -d --name dvwa-app -p 8082:80 dvwa-app:latest'
+                
+                echo "Desplegando DVWA con Docker..."
+                sh """
+                    docker rm -f dvwa-app || true
+                    docker run -d --name dvwa-app -p 8082:80 dvwa-app:latest
+                """
+                
+                echo "✅ DVWA desplegado en: http://localhost:8082"
             }
+        }
+    }
+    
+    post {
+        always {
+            echo "✅ Pipeline completado"
+            echo "📊 SonarQube: http://localhost:9000/dashboard?id=DVWA-Security-App"
+            echo "🌐 DVWA: http://localhost:8082"
         }
     }
 }
