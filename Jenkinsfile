@@ -1,10 +1,6 @@
 pipeline {
     agent any
 
-    environment {
-        SONAR_HOST_URL = 'http://sonarqube:9000'
-    }
-
     stages {
         stage('Checkout') {
             steps {
@@ -24,27 +20,32 @@ pipeline {
             steps {
                 unstash 'dvwa-code'
                 
-                // Usando credenciales de Jenkins para el token
+                // Usando el token de SonarQube
                 withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
                     sh '''
                         cd dvwa
                         sonar-scanner \
-                            -Dsonar.projectKey=dvwa-app \
-                            -Dsonar.projectName="DVWA Security App" \
-                            -Dsonar.sources=. \
-                            -Dsonar.host.url=${SONAR_HOST_URL} \
-                            -Dsonar.login=${SONAR_TOKEN} \
-                            -Dsonar.php.file.suffixes=.php,.php3,.php4,.php5,.phtml \
-                            -Dsonar.exclusions=**/vendor/**
+                          -Dsonar.projectKey=DVWA-Security-App \
+                          -Dsonar.sources=. \
+                          -Dsonar.host.url=http://sonarqube:9000 \
+                          -Dsonar.token=${SONAR_TOKEN} \
+                          -Dsonar.php.file.suffixes=.php \
+                          -Dsonar.exclusions=**/vendor/**
                     '''
                 }
             }
         }
 
-        stage('Quality Gate') {
+        stage('Quality Gate Check') {
             steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: false
+                script {
+                    timeout(time: 5, unit: 'MINUTES') {
+                        def qg = waitForQualityGate()
+                        if (qg.status != 'OK') {
+                            echo "⚠️  Quality Gate no aprobado: ${qg.status}"
+                            currentBuild.result = 'UNSTABLE'
+                        }
+                    }
                 }
             }
         }
@@ -55,6 +56,14 @@ pipeline {
                 sh 'docker rm -f dvwa-app || true'
                 sh 'docker run -d --name dvwa-app -p 8082:80 dvwa-app:latest'
             }
+        }
+    }
+    
+    post {
+        always {
+            echo "✅ Pipeline completado"
+            echo "📊 Dashboard de SonarQube: http://localhost:9000/dashboard?id=DVWA-Security-App"
+            echo "🌐 DVWA desplegado en: http://localhost:8082"
         }
     }
 }
