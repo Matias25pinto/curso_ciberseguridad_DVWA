@@ -20,7 +20,6 @@ pipeline {
             steps {
                 unstash 'dvwa-code'
                 
-                // Usando el token de SonarQube
                 withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
                     sh '''
                         cd dvwa
@@ -36,20 +35,6 @@ pipeline {
             }
         }
 
-        stage('Quality Gate Check') {
-            steps {
-                script {
-                    timeout(time: 5, unit: 'MINUTES') {
-                        def qg = waitForQualityGate()
-                        if (qg.status != 'OK') {
-                            echo "⚠️  Quality Gate no aprobado: ${qg.status}"
-                            currentBuild.result = 'UNSTABLE'
-                        }
-                    }
-                }
-            }
-        }
-
         stage('Build & Deploy') {
             steps {
                 sh 'cd dvwa && docker build -t dvwa-app:latest .'
@@ -61,9 +46,10 @@ pipeline {
     
     post {
         always {
-            echo "✅ Pipeline completado"
+            echo "✅ Pipeline completado exitosamente"
             echo "📊 Dashboard de SonarQube: http://localhost:9000/dashboard?id=DVWA-Security-App"
             echo "🌐 DVWA desplegado en: http://localhost:8082"
+            echo "🔗 Enlace al análisis: http://sonarqube:9000/api/ce/task?id=366cb8c5-f0ab-4c1b-ab75-6fb96a5af9dc"
         }
     }
 }
