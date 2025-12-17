@@ -4,14 +4,11 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                echo "Obteniendo el código desde GitHub..."
-                sh 'rm -rf dvwa || true'
-                sh 'git clone https://github.com/Matias25pinto/curso_ciberseguridad_DVWA dvwa'
-                stash name: 'dvwa-code', includes: 'dvwa/**'
+                checkout scm
             }
         }
 
-        stage('SAST-SonarQube') {
+        stage('SAST-SonarQube with Pagination') {
             agent {
                 docker {
                     image 'sonarsource/sonar-scanner-cli:latest'
@@ -20,100 +17,104 @@ pipeline {
             }
             steps {
                 script {
-                    // Recuperar el código stasheado
-                    unstash 'dvwa-code'
-                    
-                    // Eliminar archivo anterior si existe
-                    sh 'rm -f sonarqube.json || true'
-                    
                     withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
-                        try {
-                            // Ejecutar SonarQube y obtener reporte JSON
-                            sh '''
-                                cd dvwa
+                        sh '''
+                            # Instalar jq para procesar JSON
+                            apt-get update && apt-get install -y jq curl
+                            
+                            # Ejecutar análisis
+                            sonar-scanner \
+                              -Dsonar.projectKey=DVWA-Security-App \
+                              -Dsonar.sources=. \
+                              -Dsonar.host.url=http://sonarqube:9000 \
+                              -Dsonar.token=${SONAR_TOKEN}
+                            
+                            # Esperar procesamiento
+                            sleep 15
+                            
+                            # Obtener el total de issues primero
+                            echo "Obteniendo total de issues..."
+                            TOTAL_ISSUES=$(curl -s -u ${SONAR_TOKEN}: \
+                              "http://sonarqube:9000/api/issues/search?componentKeys=DVWA-Security-App&resolved=false&ps=1" \
+                              | jq '.total' || echo "0")
+                            
+                            echo "Total de issues: $TOTAL_ISSUES"
+                            
+                            # Si hay más de 500 issues, necesitamos paginación
+                            PAGE_SIZE=500
+                            PAGES=$(( ($TOTAL_ISSUES + $PAGE_SIZE - 1) / $PAGE_SIZE ))
+                            
+                            echo "Recuperando $PAGES páginas de issues..."
+                            
+                            # Crear archivo base
+                            echo '{"issues": [], "total": '$TOTAL_ISSUES'}' > all-issues.json
+                            
+                            # Recorrer todas las páginas
+                            for (( PAGE=1; PAGE<=PAGES; PAGE++ )); do
+                                echo "Obteniendo página $PAGE de $PAGES..."
                                 
-                                # 1. Ejecutar análisis
-                                sonar-scanner \
-                                  -Dsonar.projectKey=DVWA-Security-App \
-                                  -Dsonar.sources=. \
-                                  -Dsonar.host.url=http://sonarqube:9000 \
-                                  -Dsonar.token=${SONAR_TOKEN}
-                                
-                                # 2. Esperar a que se procese
-                                sleep 10
-                                
-                                # 3. Obtener reporte JSON via API
                                 curl -s -u ${SONAR_TOKEN}: \
-                                  "http://sonarqube:9000/api/issues/search?componentKeys=DVWA-Security-App&resolved=false&ps=1000" \
-                                  -o ../sonarqube.json
+                                  "http://sonarqube:9000/api/issues/search?componentKeys=DVWA-Security-App&resolved=false&ps=${PAGE_SIZE}&p=${PAGE}" \
+                                  -o "page-${PAGE}.json"
                                 
-                                # 4. Mover al directorio principal
-                                mv ../sonarqube.json . 2>/dev/null || true
-                            '''
-                        } catch (err) {
-                            unstable(message: "SonarQube encontró hallazgos de seguridad")
-                        }
-                    }
-                    
-                    // Verificar que el archivo se creó
-                    sh '''
-                        test -f dvwa/sonarqube.json && mv dvwa/sonarqube.json . || echo "Archivo no existe, creando vacío..."
-                        test -f sonarqube.json || echo "{}" > sonarqube.json
-                        echo "=== Archivo sonarqube.json ==="
-                        ls -la sonarqube.json
-                        
-                        # Mostrar información básica del reporte (sin usar readJSON)
-                        echo "=== Información del reporte ==="
-                        if [ -s sonarqube.json ] && [ "$(cat sonarqube.json)" != "{}" ]; then
-                            echo "El archivo sonarqube.json tiene contenido."
-                            # Usar jq si está disponible en el contenedor
-                            if command -v jq &> /dev/null; then
-                                TOTAL_ISSUES=$(jq '.total' sonarqube.json 2>/dev/null || echo "0")
-                                echo "Total de issues: $TOTAL_ISSUES"
-                            else
-                                echo "jq no está disponible para analizar el JSON."
+                                # Combinar los issues
+                                jq -s '.[0].issues += .[1].issues | .[0]' \
+                                  all-issues.json page-${PAGE}.json > temp.json
+                                mv temp.json all-issues.json
+                            done
+                            
+                            # Obtener medidas también
+                            curl -s -u ${SONAR_TOKEN}: \
+                              "http://sonarqube:9000/api/measures/component?component=DVWA-Security-App&metricKeys=bugs,vulnerabilities,code_smells,security_hotspots" \
+                              -o measures.json
+                            
+                            # Crear reporte final combinado
+                            jq -s '.[0] * {measures: .[1]}' all-issues.json measures.json > sonarqube-full-report.json
+                            
+                            # Crear un resumen simple
+                            echo "=== RESUMEN DE SONARQUBE ==="
+                            echo "Total issues: $TOTAL_ISSUES"
+                            
+                            # Contar por severidad si hay issues
+                            if [ "$TOTAL_ISSUES" -gt 0 ]; then
+                                BLOCKER=$(jq '[.issues[] | select(.severity=="BLOCKER")] | length' all-issues.json)
+                                CRITICAL=$(jq '[.issues[] | select(.severity=="CRITICAL")] | length' all-issues.json)
+                                MAJOR=$(jq '[.issues[] | select(.severity=="MAJOR")] | length' all-issues.json)
+                                MINOR=$(jq '[.issues[] | select(.severity=="MINOR")] | length' all-issues.json)
+                                
+                                echo "Blocker: $BLOCKER"
+                                echo "Critical: $CRITICAL"
+                                echo "Major: $MAJOR"
+                                echo "Minor: $MINOR"
                             fi
-                        else
-                            echo "El archivo sonarqube.json está vacío o no existe."
-                        fi
-                    '''
+                            
+                            # Mostrar medidas
+                            if [ -f measures.json ]; then
+                                echo "=== MÉTRICAS ==="
+                                jq -r '.component.measures[] | "\(.metric): \(.value)"' measures.json 2>/dev/null || true
+                            fi
+                            
+                            # Para simplificar, también crear un archivo pequeño con solo el resumen
+                            echo '{
+                              "project": "DVWA-Security-App",
+                              "total_issues": '$TOTAL_ISSUES',
+                              "timestamp": "'$(date -Iseconds)'"
+                            }' > sonarqube-summary.json
+                        '''
+                    }
                 }
                 
-                // Archivar resultados
-                archiveArtifacts artifacts: 'sonarqube.json', fingerprint: true, allowEmptyArchive: true
-            }
-            
-            post {
-                always {
-                    // Mostrar mensaje simple sin procesar JSON
-                    echo "✅ Análisis de SonarQube completado"
-                    echo "📊 Dashboard: http://localhost:9000/dashboard?id=DVWA-Security-App"
-                    echo "📄 Reporte JSON archivado como sonarqube.json"
-                }
+                // Archivar múltiples archivos JSON
+                archiveArtifacts artifacts: 'sonarqube-*.json,all-issues.json,measures.json', fingerprint: true, allowEmptyArchive: true
             }
         }
 
         stage('Build & Deploy') {
             steps {
-                echo "Construyendo Docker image para DVWA..."
-                sh 'cd dvwa && docker build -t dvwa-app:latest .'
-                
-                echo "Desplegando DVWA con Docker..."
-                sh """
-                    docker rm -f dvwa-app || true
-                    docker run -d --name dvwa-app -p 8082:80 dvwa-app:latest
-                """
-                
-                echo "✅ DVWA desplegado en: http://localhost:8082"
+                sh 'docker build -t dvwa-app:latest .'
+                sh 'docker rm -f dvwa-app || true'
+                sh 'docker run -d --name dvwa-app -p 8082:80 dvwa-app:latest'
             }
-        }
-    }
-    
-    post {
-        always {
-            echo "✅ Pipeline completado"
-            echo "📊 SonarQube: http://localhost:9000/dashboard?id=DVWA-Security-App"
-            echo "🌐 DVWA: http://localhost:8082"
         }
     }
 }
