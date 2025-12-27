@@ -51,7 +51,7 @@ pipeline {
                                 mv ../sonarqube.json . 2>/dev/null || true
                             '''
                         } catch (err) {
-                            unstable(message: "SonarQube encontró hallazgos de seguridad")
+                            error("CRÍTICO: Se encontraron vulnerabilidades de nivel ERROR. Pipeline abortado.")
                         }
                     }
                     
