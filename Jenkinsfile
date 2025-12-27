@@ -56,14 +56,26 @@ pipeline {
             }
         }
 
-        stage('Quality Gate') {
+        stage('Quality Gate (API)') {
             steps {
-                timeout(time: 2, unit: 'MINUTES') {
-                    script {
-                        def qg = waitForQualityGate()
-                        if (qg.status != 'OK') {
-                            error "❌ Pipeline abortado: Quality Gate fallido (${qg.status})"
-                        }
+                script {
+                    withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
+
+                        sh '''
+                            echo "⏳ Esperando resultado del Quality Gate..."
+                            sleep 10
+
+                            STATUS=$(curl -s -u ${SONAR_TOKEN}: \
+                            "http://sonarqube:9000/api/qualitygates/project_status?projectKey=DVWA-Security-App" \
+                            | jq -r '.projectStatus.status')
+
+                            echo "Quality Gate status: $STATUS"
+
+                            if [ "$STATUS" != "OK" ]; then
+                                echo "❌ Quality Gate fallido"
+                                exit 1
+                            fi
+                        '''
                     }
                 }
             }
