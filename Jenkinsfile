@@ -52,6 +52,23 @@ pipeline {
                     '''
 
                     archiveArtifacts artifacts: 'sonarqube.json', fingerprint: true
+
+                    sh '''
+                        if [ ! -f sonarqube.json ]; then
+                            echo "❌ sonarqube.json no existe"
+                            exit 1
+                        fi
+
+                        echo "🔍 Buscando issues CRITICAL o BLOCKER..."
+
+                        if grep -q '"severity":"CRITICAL"' sonarqube.json || \
+                        grep -q '"severity":"BLOCKER"' sonarqube.json; then
+                            echo "❌ Se encontraron issues CRITICAL o BLOCKER"
+                            exit 1
+                        fi
+
+                        echo "✅ No se encontraron issues críticos"
+                    '''
                 }
             }
         }
@@ -84,28 +101,28 @@ pipeline {
             }
         }
 
-        stage('Fail on Critical Issues') {
-            steps {
-                script {
-                    sh '''
-                        if [ ! -f sonarqube.json ]; then
-                            echo "❌ sonarqube.json no existe"
-                            exit 1
-                        fi
+        // stage('Fail on Critical Issues') {
+        //     steps {
+        //         script {
+        //             sh '''
+        //                 if [ ! -f sonarqube.json ]; then
+        //                     echo "❌ sonarqube.json no existe"
+        //                     exit 1
+        //                 fi
 
-                        echo "🔍 Buscando issues CRITICAL o BLOCKER..."
+        //                 echo "🔍 Buscando issues CRITICAL o BLOCKER..."
 
-                        if grep -q '"severity":"CRITICAL"' sonarqube.json || \
-                        grep -q '"severity":"BLOCKER"' sonarqube.json; then
-                            echo "❌ Se encontraron issues CRITICAL o BLOCKER"
-                            exit 1
-                        fi
+        //                 if grep -q '"severity":"CRITICAL"' sonarqube.json || \
+        //                 grep -q '"severity":"BLOCKER"' sonarqube.json; then
+        //                     echo "❌ Se encontraron issues CRITICAL o BLOCKER"
+        //                     exit 1
+        //                 fi
 
-                        echo "✅ No se encontraron issues críticos"
-                    '''
-                }
-            }
-        }
+        //                 echo "✅ No se encontraron issues críticos"
+        //             '''
+        //         }
+        //     }
+        // }
 
         stage('Build & Deploy') {
             steps {
