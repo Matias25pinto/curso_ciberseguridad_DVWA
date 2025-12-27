@@ -84,6 +84,23 @@ pipeline {
             }
         }
 
+        stage('Fail on Critical Issues') {
+            steps {
+                script {
+                    sh '''
+                        echo "🔍 Buscando issues CRITICAL o BLOCKER..."
+
+                        if grep -q '"severity":"CRITICAL"' sonarqube.json || grep -q '"severity":"BLOCKER"' sonarqube.json; then
+                            echo "❌ Se encontraron vulnerabilidades CRITICAL/BLOCKER"
+                            exit 1
+                        else
+                            echo "✅ No se encontraron issues críticos"
+                        fi
+                    '''
+                }
+            }
+        }
+
         stage('Build & Deploy') {
             steps {
                 echo "Construyendo Docker image para DVWA..."
