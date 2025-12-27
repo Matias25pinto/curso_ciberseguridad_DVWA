@@ -60,14 +60,17 @@ pipeline {
             steps {
                 script {
                     withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
-
                         sh '''
                             echo "⏳ Esperando resultado del Quality Gate..."
                             sleep 10
 
-                            STATUS=$(curl -s -u ${SONAR_TOKEN}: \
-                            "http://sonarqube:9000/api/qualitygates/project_status?projectKey=DVWA-Security-App" \
-                            | jq -r '.projectStatus.status')
+                            RESPONSE=$(curl -s -u ${SONAR_TOKEN}: \
+                            "http://sonarqube:9000/api/qualitygates/project_status?projectKey=DVWA-Security-App")
+
+                            echo "Respuesta SonarQube:"
+                            echo "$RESPONSE"
+
+                            STATUS=$(echo "$RESPONSE" | grep -o '"status":"[^"]*"' | head -1 | sed 's/"status":"//;s/"//')
 
                             echo "Quality Gate status: $STATUS"
 
