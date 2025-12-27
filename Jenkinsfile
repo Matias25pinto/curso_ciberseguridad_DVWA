@@ -88,14 +88,20 @@ pipeline {
             steps {
                 script {
                     sh '''
+                        if [ ! -f sonarqube.json ]; then
+                            echo "❌ sonarqube.json no existe"
+                            exit 1
+                        fi
+
                         echo "🔍 Buscando issues CRITICAL o BLOCKER..."
 
-                        if grep -q '"severity":"CRITICAL"' sonarqube.json || grep -q '"severity":"BLOCKER"' sonarqube.json; then
-                            echo "❌ Se encontraron vulnerabilidades CRITICAL/BLOCKER"
+                        if grep -q '"severity":"CRITICAL"' sonarqube.json || \
+                        grep -q '"severity":"BLOCKER"' sonarqube.json; then
+                            echo "❌ Se encontraron issues CRITICAL o BLOCKER"
                             exit 1
-                        else
-                            echo "✅ No se encontraron issues críticos"
                         fi
+
+                        echo "✅ No se encontraron issues críticos"
                     '''
                 }
             }
